@@ -47,13 +47,31 @@ class OfferConfig(BaseModel):
     meeting_owner: str = ""
 
 
+PRODUCT_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+
+
 class ProductConfig(BaseModel):
+    # Which product this is when Harvey sells several (`products:`), e.g.
+    # "hosting-ia". A prospect carries the key of the product it is offered.
+    key: str = ""
     name: str
     description: str
     pricing: str
     key_benefits: list[str]
     objection_responses: dict[str, str]
     offer: OfferConfig = OfferConfig()
+    # Rules the copy must keep for this product ("never name the provider",
+    # "no launch dates"), given to the writer and the handler.
+    rules: list[str] = []
+
+    @field_validator("key")
+    @classmethod
+    def _valid_key(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v and not PRODUCT_KEY_RE.match(v):
+            raise ValueError(
+                "product key must be lowercase letters, digits and dashes (e.g. hosting-ia)")
+        return v
 
 
 class ICPConfig(BaseModel):
@@ -486,6 +504,15 @@ class ComplianceConfig(BaseModel):
         return v
 
 
+def product_for(config, key: str | None):
+    """config.product_for(key), or the main product for a config without
+    several products (older configs, test stand-ins)."""
+    method = getattr(config, "product_for", None)
+    if callable(method):
+        return method(key)
+    return config.product
+
+
 def compliance_of(config) -> ComplianceConfig:
     """The compliance section, or the defaults when a config has none."""
     found = getattr(config, "compliance", None)
@@ -683,6 +710,11 @@ def load_email_rules(config) -> str:
 class HarveyConfig(BaseModel):
     persona: PersonaConfig
     product: ProductConfig
+    # More products, each with its own key. A prospect whose product_key
+    # matches one is written to and answered about that product; any other
+    # prospect gets `product`. Knowledge for each lives in
+    # skills/products/<key>.md (replacing product_knowledge.md for it).
+    products: list[ProductConfig] = []
     icp: ICPConfig
     channels: ChannelsConfig = ChannelsConfig()
     usage: UsageConfig = UsageConfig()
@@ -692,6 +724,33 @@ class HarveyConfig(BaseModel):
     # The file it was loaded from, so a running Harvey can re-read the
     # sending mode from that same file (refresh_sending_mode).
     _source_path: str | None = PrivateAttr(default=None)
+
+    @field_validator("products")
+    @classmethod
+    def _unique_product_keys(cls, v: list[ProductConfig]) -> list[ProductConfig]:
+        seen = set()
+        for product in v:
+            if not product.key:
+                raise ValueError(f"every entry in products needs a key ({product.name!r} has none)")
+            if product.key in seen:
+                raise ValueError(f"two products share the key {product.key!r}")
+            seen.add(product.key)
+        return v
+
+    def product_for(self, key: str | None) -> ProductConfig:
+        """The product a prospect with this product_key is offered."""
+        key = (key or "").strip().lower()
+        if key:
+            for product in self.products:
+                if product.key == key:
+                    return product
+            if self.product.key == key:
+                return self.product
+        return self.product
+
+    def product_keys(self) -> list[str]:
+        keys = [self.product.key] if self.product.key else []
+        return keys + [p.key for p in self.products if p.key not in keys]
 
 
 class EnvConfig(BaseModel):

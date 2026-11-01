@@ -36,6 +36,9 @@ class Prospect(BaseModel):
     personalization_notes: str = ""
     # IANA time zone for the send window ("Europe/Oslo"), once known.
     timezone: str = ""
+    # Which configured product this contact is offered (config.products);
+    # "" means the main product.
+    product_key: str = ""
     # legacy fields kept for backwards compat with existing code
     company: str = ""
     industry: str = ""

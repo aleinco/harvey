@@ -15,7 +15,7 @@ import re
 from datetime import datetime, timezone
 
 from harvey.brain import Brain
-from harvey.config import EmailRulesError, HarveyConfig, compliance_of, load_email_rules
+from harvey.config import EmailRulesError, HarveyConfig, compliance_of, load_email_rules, product_for
 from harvey.humanize import humanize, humanizer_enabled
 from harvey.integrations.mail_provider import NATIVE_PROVIDERS
 from harvey.models.campaign import Campaign, EmailStep
@@ -99,6 +99,15 @@ def footer_rule(config, rules: str) -> str:
     return "\n".join(lines)
 
 
+
+def product_rules_block(product) -> str:
+    """The product's own copy rules, as a prompt section ("" when it has none)."""
+    rules = [r.strip() for r in getattr(product, "rules", []) or [] if r and r.strip()]
+    if not rules:
+        return ""
+    return ("\n\n## RULES FOR THIS PRODUCT (never break these)\n"
+            + "\n".join(f"- {r}" for r in rules))
+
 class Writer:
     def __init__(
         self,
@@ -113,6 +122,16 @@ class Writer:
         self.env = env
 
     @property
+    def _product(self):
+        """The product being written for: run() switches it per batch, and
+        it is the main product until then."""
+        return self.__dict__.get("_current_product") or self.config.product
+
+    @_product.setter
+    def _product(self, product):
+        self.__dict__["_current_product"] = product
+
+    @property
     def is_native(self) -> bool:
         return self.config.channels.email.provider in NATIVE_PROVIDERS
 
@@ -120,8 +139,9 @@ class Writer:
         """Create email campaigns for prospects that need outreach."""
         logger.info("Writer: Crafting email campaigns...")
 
-        # Load foundational skills for this agent
-        self.skills = self.brain.load_skills_for_agent("writer")
+        # Load foundational skills for this agent (reloaded per product below)
+        self._product = self.config.product
+        self.skills = base_skills = self.brain.load_skills_for_agent("writer")
         try:
             self.email_rules = load_email_rules(self.config)
         except EmailRulesError as e:
@@ -170,6 +190,11 @@ class Writer:
                 f"Writer: Creating campaign '{batch_name}' for "
                 f"{len(prospects)} prospects."
             )
+            # Every prospect in a batch shares one product (see _group_prospects).
+            product_key = getattr(prospects[0], "product_key", "") or ""
+            self._product = product_for(self.config, product_key)
+            self.skills = (self.brain.load_skills_for_agent("writer", product_key)
+                           if product_key else base_skills)
 
             # Generate the email sequence
             self._no_reply = False
@@ -195,6 +220,7 @@ class Writer:
                 sequence=sequence,
                 prospect_ids=[p.id for p in prospects],
                 status="draft",
+                product_key=product_key and (getattr(self._product, "key", "") or ""),
             )
             campaign_id = await self.state.add_campaign(campaign)
 
@@ -384,10 +410,10 @@ class Writer:
 
         prompt = self.brain.load_prompt(
             "writer",
-            product_name=self.config.product.name,
-            product_description=self.config.product.description,
-            product_benefits="\n".join(f"- {b}" for b in self.config.product.key_benefits),
-            product_pricing=self.config.product.pricing,
+            product_name=self._product.name,
+            product_description=self._product.description,
+            product_benefits="\n".join(f"- {b}" for b in self._product.key_benefits),
+            product_pricing=self._product.pricing,
             persona_name=self.config.persona.name,
             persona_company=self.config.persona.company,
             persona_role=self.config.persona.role,
@@ -395,6 +421,7 @@ class Writer:
         ) or ""
         if self.skills:
             prompt += "\n\n" + self.skills
+        prompt += product_rules_block(self._product)
         if startup is not None:
             prompt += self._startup_playbook()
         prompt += await self._feedback_block([prospect.id])
@@ -465,10 +492,10 @@ Return ONLY JSON: {{"subject": "...", "body": "..."}}"""
 
         prompt = self.brain.load_prompt(
             "writer",
-            product_name=self.config.product.name,
-            product_description=self.config.product.description,
-            product_benefits="\n".join(f"- {b}" for b in self.config.product.key_benefits),
-            product_pricing=self.config.product.pricing,
+            product_name=self._product.name,
+            product_description=self._product.description,
+            product_benefits="\n".join(f"- {b}" for b in self._product.key_benefits),
+            product_pricing=self._product.pricing,
             persona_name=self.config.persona.name,
             persona_company=self.config.persona.company,
             persona_role=self.config.persona.role,
@@ -479,14 +506,15 @@ Return ONLY JSON: {{"subject": "...", "body": "..."}}"""
             prompt = f"""You are {self.config.persona.name}, {self.config.persona.role} at {self.config.persona.company}.
 Your tone is: {self.config.persona.tone}
 
-Product: {self.config.product.name}
-Description: {self.config.product.description}
-Key benefits: {', '.join(self.config.product.key_benefits)}
-Pricing: {self.config.product.pricing}"""
+Product: {self._product.name}
+Description: {self._product.description}
+Key benefits: {', '.join(self._product.key_benefits)}
+Pricing: {self._product.pricing}"""
 
         # Inject email framework skills
         if self.skills:
             prompt += "\n\n" + self.skills
+        prompt += product_rules_block(self._product)
         # One template goes to the whole batch: founder framing only when
         # every prospect in it is a startup.
         backed = [await self._startup(p.company_id) for p in prospects]
@@ -613,6 +641,9 @@ Return ONLY a JSON array (no markdown fences, no commentary):
             # greet anyone by name.
             kind = "inbox-outreach" if prospect.is_company_inbox else "outreach"
             key = f"{industry}-{kind}"
+            # One campaign sells one product.
+            if getattr(prospect, "product_key", ""):
+                key = f"{prospect.product_key}-{key}"
 
             if key not in batches:
                 batches[key] = []

@@ -13,8 +13,10 @@ import re
 from datetime import datetime, timezone
 
 from harvey import optout_es
+from harvey.agents.writer import product_rules_block
 from harvey.brain import Brain, BrainUnavailable
 from harvey.config import (
+    product_for,
     DEFAULT_OPT_OUT_LINE, HarveyConfig, EnvConfig, compliance_of, legacy_sending_held,
     live_do_not_contact,
 )
@@ -1068,10 +1070,12 @@ Respond with ONLY the category label, nothing else."""
         """Generate an appropriate response based on intent."""
         history = conversation_history(convo.thread, prospect.full_name())
 
+        product_key = getattr(prospect, "product_key", "") or ""
+        product = product_for(self.config, product_key)
         objection_context = ""
         if intent == "objection":
             # Check if we have a pre-configured response
-            for trigger, response in self.config.product.objection_responses.items():
+            for trigger, response in product.objection_responses.items():
                 if trigger.lower() in reply_text.lower():
                     objection_context = f"\nSuggested approach for this objection: {response}"
                     break
@@ -1080,11 +1084,19 @@ Respond with ONLY the category label, nothing else."""
         if not prompt:
             prompt = f"""You are {self.config.persona.name}, {self.config.persona.role} at {self.config.persona.company}.
 Your tone is: {self.config.persona.tone}
-Product: {self.config.product.name} — {self.config.product.description}"""
+Product: {product.name} — {product.description}"""
 
-        # Inject objection handling + sales methodology skills
-        if self.skills:
-            prompt += "\n\n" + self.skills
+        # Inject objection handling + sales methodology skills (the
+        # prospect's own product knowledge when Harvey sells several).
+        skills = (self.brain.load_skills_for_agent("handler", product_key)
+                  if product_key and hasattr(self.brain, "load_skills_for_agent")
+                  else self.skills)
+        if skills:
+            prompt += "\n\n" + skills
+        if product_key:
+            prompt += (f"\n\nTHE PRODUCT THIS CONVERSATION IS ABOUT: {product.name} — "
+                       f"{product.description}\nPricing: {product.pricing}")
+        prompt += product_rules_block(product)
         # A startup's founder (YC, another accelerator, a raise they
         # announced) gets the founder playbook. An optional lookup never
         # stops a reply: startup_facts reads a failure as "not a startup".

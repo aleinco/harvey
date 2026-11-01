@@ -26,6 +26,8 @@ class Campaign(BaseModel):
     sequence: list[EmailStep] = Field(default_factory=list)
     status: str = "draft"  # draft/active/paused/completed
     prospect_ids: list[str] = Field(default_factory=list)
+    # The product this campaign sells (config.products); "" is the main one.
+    product_key: str = ""
     created_at: datetime = Field(default_factory=_utcnow)
 
     def sequence_json(self) -> str:

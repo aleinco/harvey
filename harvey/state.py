@@ -519,6 +519,12 @@ MIGRATIONS: list[str] = [
     -- knows about the recipient. Empty until then.
     ALTER TABLE prospects ADD COLUMN timezone TEXT DEFAULT '';
     """,
+    # ── v15: several products: which one a contact and a campaign are about ──
+    """
+    ALTER TABLE prospects ADD COLUMN product_key TEXT DEFAULT '';
+    ALTER TABLE campaigns ADD COLUMN product_key TEXT DEFAULT '';
+    CREATE INDEX IF NOT EXISTS idx_prospects_product ON prospects(product_key, status);
+    """,
 ]
 
 BRAIN_PROVIDERS = ("claude", "codex")
@@ -753,6 +759,7 @@ class StateManager:
         d["phone_verified"] = bool(d.get("phone_verified", 0))
         d["email_status"] = d.get("email_status") or ""
         d["timezone"] = d.get("timezone") or ""
+        d["product_key"] = d.get("product_key") or ""
         return Prospect(**d)
 
     async def add_prospect(self, prospect: Prospect) -> str:
@@ -769,8 +776,8 @@ class StateManager:
                     email_status, phone, phone_verified, linkedin_url, title,
                     seniority, department, source, source_url, status, score,
                     personalization_notes, company, industry, company_size,
-                    created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    created_at, updated_at, product_key)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     prospect.id, prospect.company_id,
                     prospect.first_name, prospect.last_name,
@@ -785,6 +792,7 @@ class StateManager:
                     prospect.company, prospect.industry, prospect.company_size,
                     prospect.created_at.isoformat(),
                     prospect.updated_at.isoformat(),
+                    prospect.product_key or "",
                 ),
             )
             await db.commit()
@@ -2276,13 +2284,13 @@ class StateManager:
             await db.execute(
                 """INSERT INTO campaigns
                    (id, name, channel, instantly_campaign_id, sequence_json,
-                    prospect_ids_json, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    prospect_ids_json, status, created_at, product_key)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     campaign.id, campaign.name, campaign.channel,
                     campaign.instantly_campaign_id, campaign.sequence_json(),
                     json.dumps(campaign.prospect_ids), campaign.status,
-                    campaign.created_at.isoformat(),
+                    campaign.created_at.isoformat(), campaign.product_key or "",
                 ),
             )
             await db.commit()
