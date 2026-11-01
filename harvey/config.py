@@ -379,9 +379,12 @@ OPT_OUT_WORDS = ("no thanks", "no thank you", "unsubscribe", "stop", "remove me"
                  "opt out")
 # The same in Hebrew ('השיבו "הסר"', 'תגידו לי "לא תודה"').
 HEBREW_OPT_OUT_WORDS = ("הסר", "הסירו", "הסרה", "לא תודה", "הסירו אותי", "תורידו אותי")
+# The same in Spanish and Catalan ('Responde "baja"', 'Respon "no, gràcies"').
+SPANISH_OPT_OUT_WORDS = ("baja", "darme de baja", "no gracias", "no, gracias", "baixa",
+                         "no gràcies", "no, gràcies", "stop")
 _OPT_OUT_WORD_RE = "(?:" + "|".join(
     r"[\s,]+".join(map(re.escape, w.split()))
-    for w in OPT_OUT_WORDS + HEBREW_OPT_OUT_WORDS) + ")"
+    for w in OPT_OUT_WORDS + HEBREW_OPT_OUT_WORDS + SPANISH_OPT_OUT_WORDS) + ")"
 _ASKS_FOR_OPT_OUT_RE = re.compile(
     r"\breply(?:\s+with)?\s*[\"'\u201c\u2018]?\s*" + _OPT_OUT_WORD_RE + r"\b", re.IGNORECASE)
 # Reply / answer / write / tell me, then a few words at most ("במייל חוזר").
@@ -391,6 +394,19 @@ _ASKS_FOR_OPT_OUT_HE_RE = re.compile(
     r"(?:\s+[^\s\"'\u05f3\u05f4\u201c\u201d\u2018\u2019]+){0,3}?"
     r"\s*[\"'\u05f3\u05f4\u201c\u201d\u2018\u2019]?\s*" + _OPT_OUT_WORD_RE + r"(?!\w)",
     re.IGNORECASE)
+# Spanish and Catalan: reply / answer / write, then a few words at most
+# ("a este correo con").
+_ASKS_FOR_OPT_OUT_ES_RE = re.compile(
+    r"(?<!\w)(?:responde|responda|respondan|responded|respondednos|respondenos|contesta|conteste"
+    r"|contesten|contestad|contestadnos|escribe|escriba|escriban|escribid|escribenos|escríbenos"
+    r"|escribidnos|respon|respongui|responeu|contesteu|escriu|escrigui|escriviu|envia|envía"
+    r"|enviad|envieu|di|digue|digues|diga|decid|digueu)"
+    r"(?:\s+[^\s\"'\u201c\u201d\u2018\u2019\u00ab\u00bb]+){0,4}?"
+    r"\s*[\"'\u201c\u2018\u00ab]?\s*" + _OPT_OUT_WORD_RE + r"(?!\w)",
+    re.IGNORECASE)
+# "Click" in Spanish and Catalan: a footer has no link to click.
+_SPANISH_CLICK_RE = re.compile(
+    r"(?<!\w)(?:clic|clica|clique|pulsa|pulse|pincha|pinche|prem)(?!\w)", re.IGNORECASE)
 # "Click" in Hebrew: a footer has no link to click.
 _HEBREW_CLICK_RE = re.compile(r"(?<!\w)ו?(?:לחצו|לחצי|לחץ\s+(?:כאן|על)|הקליקו|הקליקי|הקלק)(?!\w)")
 
@@ -454,16 +470,18 @@ class ComplianceConfig(BaseModel):
         if not v:
             return v
         if (any(bit in lowered for bit in ("http", "www.", "click", "@"))
-                or _HEBREW_CLICK_RE.search(v)):
+                or _HEBREW_CLICK_RE.search(v) or _SPANISH_CLICK_RE.search(v)):
             raise ValueError(
                 "opt_out_line can't contain a link or an email address: cold email "
                 "allows one link, and opting out must be as simple as replying."
             )
-        if not (_ASKS_FOR_OPT_OUT_RE.search(v) or _ASKS_FOR_OPT_OUT_HE_RE.search(v)):
+        if not (_ASKS_FOR_OPT_OUT_RE.search(v) or _ASKS_FOR_OPT_OUT_HE_RE.search(v)
+                or _ASKS_FOR_OPT_OUT_ES_RE.search(v)):
             raise ValueError(
                 "opt_out_line must ask for a reply Harvey recognises as an opt-out, "
                 'e.g. Reply "no thanks" / Reply STOP, or in Hebrew השיבו "הסר". Recognised: '
-                + ", ".join(f'"{w}"' for w in OPT_OUT_WORDS + HEBREW_OPT_OUT_WORDS) + "."
+                + ", ".join(f'"{w}"' for w in OPT_OUT_WORDS + HEBREW_OPT_OUT_WORDS
+                            + SPANISH_OPT_OUT_WORDS) + "."
             )
         return v
 

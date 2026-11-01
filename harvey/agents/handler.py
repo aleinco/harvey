@@ -12,6 +12,7 @@ import logging
 import re
 from datetime import datetime, timezone
 
+from harvey import optout_es
 from harvey.brain import Brain, BrainUnavailable
 from harvey.config import (
     DEFAULT_OPT_OUT_LINE, HarveyConfig, EnvConfig, compliance_of, legacy_sending_held,
@@ -241,6 +242,10 @@ def _opt_out_reason(their_text: str, own_words: str) -> dict | None:
     if m:
         return {"rule": "phrase", "matched": m.group(0),
                 "why": f'Their reply contains "{m.group(0)}".'}
+    es = optout_es.spanish_opt_out(their_text)
+    if es:
+        return {"rule": "phrase", "matched": es,
+                "why": f'Their reply contains "{es}".'}
     for line in their_text.split("\n"):
         line = _flat(line)
         m = NO_THANKS_RE.search(line)
@@ -251,12 +256,20 @@ def _opt_out_reason(their_text: str, own_words: str) -> dict | None:
         if m:
             return {"rule": "no_thanks", "matched": m.group(0),
                     "why": f'Their reply says "{m.group(0)}" (no thanks).'}
+        es = optout_es.spanish_no_thanks(line)
+        if es:
+            return {"rule": "no_thanks", "matched": es,
+                    "why": f'Their reply says "{es}" (no thanks).'}
     bare = _flat(_MOBILE_SIGNATURE_RE.sub("", own_words or ""))
     bare = re.sub(r"[^\w\s-]", "", bare).strip()
     if (bare in BARE_OPT_OUTS
             or " ".join(w for w in bare.split() if w not in _BARE_COURTESIES) in BARE_OPT_OUTS):
         return {"rule": "only_words", "matched": bare,
                 "why": f'Their reply was only "{bare}".'}
+    es = optout_es.spanish_bare_opt_out(_MOBILE_SIGNATURE_RE.sub("", own_words or ""))
+    if es:
+        return {"rule": "only_words", "matched": es,
+                "why": f'Their reply was only "{es}".'}
     return None
 
 
@@ -557,7 +570,8 @@ class Handler:
         reply_text = ours.remove(stripped).strip() or stripped
 
         if prospect.status == "opted_out":
-            escalate = any(p in keyword_text for p in ESCALATION_PATTERNS)
+            escalate = (any(p in keyword_text for p in ESCALATION_PATTERNS)
+                        or optout_es.spanish_escalation(their_text))
             await self._record_after_opt_out(prospect, reply_text, campaign_id, escalate)
             return
 
@@ -579,7 +593,8 @@ class Handler:
         opt_out = _opt_out_reason(their_text, reply_text)
         if opt_out:
             intent = "unsubscribe"
-        elif any(p in keyword_text for p in ESCALATION_PATTERNS):
+        elif (any(p in keyword_text for p in ESCALATION_PATTERNS)
+              or optout_es.spanish_escalation(their_text)):
             intent = "escalate"
         else:
             intent = await self._classify_intent(reply_text, prospect)
