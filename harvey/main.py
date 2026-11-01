@@ -134,6 +134,23 @@ def unusable_backlog_notice(summary: dict) -> str:
     )
 
 
+async def sync_cabin(state, config, env) -> dict | None:
+    """One round trip with the cabin when it is configured; None otherwise."""
+    from harvey.integrations.cabin import CabinError, cabin_enabled, sync
+    if not cabin_enabled(config, env):
+        return None
+    try:
+        summary = await sync(state, config, env)
+    except CabinError as e:
+        logger.warning(f"Cabin: {e}. Carrying on without it this cycle.")
+        return None
+    except Exception as e:
+        logger.warning(f"Cabin sync failed: {e}. Carrying on without it this cycle.")
+        return None
+    logger.info(f"Cabin: {summary}")
+    return summary
+
+
 async def decide_next_action(
     brain: Brain,
     state: StateManager,
@@ -310,6 +327,11 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
             # 0. Approval or autopilot, as the config file says now: the
             # dashboard can switch it while Harvey runs.
             await sync_sending_mode(config, state)
+
+            # 0b. The cabin (another system's dashboard): send what happened,
+            # take new prospects, approvals and a pause. Best-effort: a cabin
+            # that is down never stops Harvey's own work.
+            await sync_cabin(state, config, env)
 
             # 1. Check quiet hours. With send windows in recipients' own time
             # zones, quiet hours only stop prospecting and writing: a cycle

@@ -707,6 +707,29 @@ def load_email_rules(config) -> str:
     return text
 
 
+class CabinConfig(BaseModel):
+    """Run Harvey from another system's dashboard (harvey/integrations/cabin.py).
+
+    Harvey calls ``<url>/sync`` once a cycle, outbound only, with the
+    CABIN_TOKEN from .env as a bearer token."""
+    enabled: bool = False
+    url: str = ""
+
+    @field_validator("url")
+    @classmethod
+    def _https_only(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            return v
+        lowered = v.lower()
+        local = lowered.startswith(("http://127.0.0.1", "http://localhost"))
+        if not (lowered.startswith("https://") or local):
+            raise ValueError("cabin.url must be https:// (http only for localhost)")
+        if "@" in v.split("://", 1)[1].split("/", 1)[0]:
+            raise ValueError("cabin.url can't carry credentials; put the token in CABIN_TOKEN")
+        return v.rstrip("/")
+
+
 class HarveyConfig(BaseModel):
     persona: PersonaConfig
     product: ProductConfig
@@ -721,6 +744,7 @@ class HarveyConfig(BaseModel):
     brain: BrainConfig = BrainConfig()
     compliance: ComplianceConfig = ComplianceConfig()
     writer: WriterConfig = WriterConfig()
+    cabin: CabinConfig = CabinConfig()
     # The file it was loaded from, so a running Harvey can re-read the
     # sending mode from that same file (refresh_sending_mode).
     _source_path: str | None = PrivateAttr(default=None)
@@ -783,6 +807,8 @@ class EnvConfig(BaseModel):
     m365_tenant_id: str = ""
     # Optional: only used when compliance.precleared.enabled is true.
     precleared_api_key: str = ""
+    # Bearer token for the cabin (cabin.enabled).
+    cabin_token: str = ""
 
 
 def _format_validation_error(e: ValidationError) -> str:
@@ -898,6 +924,7 @@ def load_env() -> EnvConfig:
         m365_client_id=os.getenv("M365_CLIENT_ID", "").strip(),
         m365_tenant_id=os.getenv("M365_TENANT_ID", "").strip(),
         precleared_api_key=os.getenv("PRECLEARED_API_KEY", "").strip(),
+        cabin_token=os.getenv("CABIN_TOKEN", "").strip(),
     )
     return env
 

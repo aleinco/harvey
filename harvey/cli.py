@@ -430,6 +430,37 @@ def cmd_export(args):
     asyncio.run(_export())
 
 
+def cmd_import(args):
+    """Import prospects another system found and measured (JSON or JSONL)."""
+    import json as _json
+    from harvey.config import load_config
+    from harvey.importer import import_records, read_records
+    from harvey.state import StateManager
+
+    async def _import():
+        config = load_config()
+        try:
+            records = read_records(args.file)
+        except (OSError, ValueError) as e:
+            print(f"\n  Can't read {args.file}: {e}\n")
+            return
+        state = StateManager()
+        await state.init_db()
+        result = await import_records(state, config, records)
+        s = result.summary()
+        print(f"\n  Imported {s['created']} new, re-routed {s['updated']}, "
+              f"skipped {s['skipped']}, {s['errors']} with problems.")
+        for label, problem in list(result.errors.items())[:10]:
+            print(f"    {label}: {problem}")
+        if args.report:
+            with open(args.report, "w", encoding="utf-8") as fh:
+                _json.dump(result.as_dict(), fh, indent=2)
+            print(f"  Full report: {args.report}")
+        print()
+
+    asyncio.run(_import())
+
+
 def cmd_gmail(args):
     """Gmail provider utilities (auth / test)."""
     from harvey.config import load_env
@@ -1092,6 +1123,12 @@ def main():
     sub = subparsers.add_parser(
         "retry-writes", help="Retry prospects the Writer couldn't write an email for")
     sub.set_defaults(func=cmd_retry_writes)
+
+    sub = subparsers.add_parser(
+        "import", help="Import prospects from a JSON/JSONL file (each with its product_key)")
+    sub.add_argument("file", help="A .json list or a .jsonl file, one prospect per line")
+    sub.add_argument("--report", default="", help="Write the per-row result to this JSON file")
+    sub.set_defaults(func=cmd_import)
 
     sub = subparsers.add_parser("sending", help="Kill switch: pause/resume sending")
     sub.add_argument("sending_action", nargs="?", default="status",

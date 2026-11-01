@@ -928,6 +928,35 @@ class StateManager:
                 row = await cursor.fetchone()
                 return self._prospect_from_row(row) if row else None
 
+    async def get_prospect_by_source_url(self, source_url: str) -> Prospect | None:
+        """The prospect recorded from this source (an import's "import:<id>")."""
+        if not source_url:
+            return None
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM prospects WHERE source_url = ? ORDER BY created_at LIMIT 1",
+                (source_url,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return self._prospect_from_row(row) if row else None
+
+    # Fields an import may change on a contact nobody has written to yet.
+    _PROSPECT_UPDATABLE = ("product_key", "personalization_notes")
+
+    async def update_prospect_fields(self, prospect_id: str, fields: dict) -> None:
+        """Set some of _PROSPECT_UPDATABLE on one prospect."""
+        fields = {k: v for k, v in fields.items() if k in self._PROSPECT_UPDATABLE}
+        if not fields:
+            return
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        async with self._connect() as db:
+            await db.execute(
+                f"UPDATE prospects SET {sets}, updated_at = ? WHERE id = ?",
+                (*fields.values(), _utcnow().isoformat(), prospect_id),
+            )
+            await db.commit()
+
     async def update_prospect_email(
         self, prospect_id: str, email: str, email_status: str
     ):
@@ -2390,6 +2419,22 @@ class StateManager:
             await db.commit()
 
     # ── Actions Log ──
+
+    async def get_actions_after(self, cursor: str, action_types, limit: int = 500) -> list[dict]:
+        """Actions of these types logged after ``cursor`` ("created_at|id"),
+        oldest first. An empty cursor starts from the beginning."""
+        created, _, last_id = (cursor or "").partition("|")
+        marks = ",".join("?" for _ in action_types)
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                f"SELECT id, action_type, details_json, created_at FROM actions "
+                f"WHERE action_type IN ({marks}) "
+                f"AND (created_at > ? OR (created_at = ? AND id > ?)) "
+                f"ORDER BY created_at, id LIMIT ?",
+                (*action_types, created, created, last_id, limit),
+            ) as cursor_:
+                return [dict(r) for r in await cursor_.fetchall()]
 
     async def log_action(self, action_type: str, agent: str, details: dict | None = None):
         async with self._connect() as db:
