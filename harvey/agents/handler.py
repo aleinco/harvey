@@ -16,6 +16,7 @@ from harvey import optout_es
 from harvey.agents.writer import product_rules_block
 from harvey.brain import Brain, BrainUnavailable
 from harvey.config import (
+    approval_required,
     product_for,
     DEFAULT_OPT_OUT_LINE, HarveyConfig, EnvConfig, compliance_of, legacy_sending_held,
     live_do_not_contact,
@@ -931,9 +932,7 @@ class Handler:
     ):
         """Route Harvey's reply through the outbox (approval ladder applies)."""
         await sync_sending_mode(self.config, self.state)
-        require_approval = getattr(
-            self.config.channels.email, "require_approval", True
-        )
+        require_approval = approval_required(self.config, getattr(prospect, "product_key", ""))
         # The first reply since you undid their opt-out waits for you, even
         # on autopilot: the undo panel promises it.
         review_key = REVIEW_NEXT_REPLY_KEY + prospect.id

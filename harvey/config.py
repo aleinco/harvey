@@ -63,6 +63,10 @@ class ProductConfig(BaseModel):
     # Rules the copy must keep for this product ("never name the provider",
     # "no launch dates"), given to the writer and the handler.
     rules: list[str] = []
+    # Every email about this product waits for a human, even on autopilot:
+    # for lists where a wrong word costs more than a slow one (existing
+    # customers, partners).
+    require_approval: bool = False
 
     @field_validator("key")
     @classmethod
@@ -502,6 +506,14 @@ class ComplianceConfig(BaseModel):
                             + SPANISH_OPT_OUT_WORDS) + "."
             )
         return v
+
+
+def approval_required(config, product_key: str | None = "") -> bool:
+    """Whether an email about this product must wait for a human: the
+    global approval mode, or a product that always requires it."""
+    if getattr(config.channels.email, "require_approval", True):
+        return True
+    return bool(getattr(product_for(config, product_key), "require_approval", False))
 
 
 def product_for(config, key: str | None):

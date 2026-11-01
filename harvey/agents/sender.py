@@ -19,6 +19,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from harvey.brain import Brain
 from harvey.config import (
+    approval_required,
     HarveyConfig, EnvConfig, cold_daily_cap, compliance_footer_lines, compliance_notice,
     compliance_of, live_do_not_contact, operator_timezone, send_window_of,
 )
@@ -601,9 +602,7 @@ class Sender:
             return
 
         await sync_sending_mode(self.config, self.state)
-        require_approval = getattr(
-            self.config.channels.email, "require_approval", True
-        )
+        require_approval = approval_required(self.config, getattr(campaign, "product_key", ""))
         initial_status = "pending_review" if require_approval else "approved"
         allow_risky = getattr(self.config.channels.email, "send_to_risky", False)
         sendable_email = (
@@ -787,7 +786,7 @@ class Sender:
             )
             return "failed", "gate: " + "; ".join(gate.reasons)[:300]
         if (item.get("approved_by") == "autopilot"
-                and getattr(self.config.channels.email, "require_approval", True)):
+                and approval_required(self.config, getattr(prospect, "product_key", ""))):
             # Autopilot approved it, and autopilot has since been turned off.
             return "pending_review", AUTOPILOT_OFF_REASON
         if item.get("approved_by") != "you":

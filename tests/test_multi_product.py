@@ -145,3 +145,47 @@ async def test_writer_writes_one_campaign_per_product(state):
     assert "Never name the data-centre provider." in hosting_prompt
     maps_prompt = next(p for p in brain.prompts if "Maps listing" in p)
     assert "Never name the data-centre provider." not in maps_prompt
+
+
+# ── A product that always waits for a human ──
+
+from harvey.config import approval_required  # noqa: E402
+from tests.test_outbox_native import FakeProvider, make_sender, seed_campaign, seed_prospect  # noqa: E402
+
+
+def test_a_product_can_require_approval_even_on_autopilot():
+    cfg = _cfg(products=[{**HOSTING, "key": "clients", "require_approval": True}, MAPS])
+    cfg.channels.email.require_approval = False
+    assert approval_required(cfg, "clients")
+    assert not approval_required(cfg, "maps")
+    assert not approval_required(cfg, "")
+    cfg.channels.email.require_approval = True
+    assert approval_required(cfg, "maps")
+
+
+@pytest.mark.asyncio
+async def test_autopilot_still_stages_that_products_emails_for_review(state):
+    pid = await seed_prospect(state)
+    await seed_campaign(state, [pid])
+    provider = FakeProvider()
+    sender = make_sender(state, provider, require_approval=False)
+    sender.config.product = type("CustomersOnly", (sender.config.product,), {"require_approval": True})
+    await sender._run_native()
+    assert provider.sent == []
+    assert len(await state.get_outbox(status="pending_review")) == 2
+
+
+@pytest.mark.asyncio
+async def test_an_autopilot_approval_for_that_product_goes_back_to_review(state):
+    from datetime import datetime, timezone
+    pid = await seed_prospect(state, status="contacted")
+    await state.add_outbox_item(
+        prospect_id=pid, to_email="jane@acme.com", subject="hola", body="Una nota corta. ¿Pregunta?",
+        send_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), status="approved",
+        campaign_id="c1", step=2, approved_by="autopilot")
+    provider = FakeProvider()
+    sender = make_sender(state, provider, require_approval=False)
+    sender.config.product = type("CustomersOnly", (sender.config.product,), {"require_approval": True})
+    await sender._drain_due()
+    assert provider.sent == []
+    assert len(await state.get_outbox(status="pending_review")) == 1
